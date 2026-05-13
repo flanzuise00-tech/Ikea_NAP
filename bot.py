@@ -27,10 +27,9 @@ def salva_nuovo_prodotto(link, nome, prezzo, img):
 def invia_telegram(nome, prezzo, link, img_url):
     """Invia il messaggio con l'immagine reale su Telegram."""
     testo = (
-        f"📦 *NUOVO PRODOTTO TROVATO*\n\n"
-        f"🔹 *Nome:* {nome}\n"
-        f"💰 *Prezzo:* €{prezzo}\n\n"
-        f"🔗 [Apri su IKEA]({link})"
+        f"🔹 *Nome:* *{nome}*\n"
+        f"💰 *Prezzo:* *€{prezzo}*\n"
+        f"🔗 [APRI]({link})"
     )
     
     url_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
