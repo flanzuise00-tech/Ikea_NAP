@@ -20,7 +20,7 @@ jobs:
           playwright install chromium --with-deps
 
       - name: Esegui lo script
-        run: python test_ikea_playwright.py
+        run: python bot.py
 
       - name: Carica Screenshot in caso di errore
         if: failure()
