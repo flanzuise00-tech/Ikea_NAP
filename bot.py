@@ -11,24 +11,25 @@ CSV_FILE = "prodotti_visti.csv"
 # ------------------------------
 
 def carica_id_visti():
-    """Carica i link già presenti nel CSV per evitare duplicati."""
     if not os.path.exists(CSV_FILE):
         return set()
     with open(CSV_FILE, mode='r', encoding='utf-8') as f:
         reader = csv.reader(f)
         return {row[0] for row in reader if row}
 
-def salva_nuovo_prodotto(link, nome, prezzo, img):
-    """Aggiunge un nuovo prodotto al file CSV."""
+def salva_nuovo_prodotto(link, nome, prezzo_nuovo, img):
     with open(CSV_FILE, mode='a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
-        writer.writerow([link, nome, prezzo, img])
+        writer.writerow([link, nome, prezzo_nuovo, img])
 
-def invia_telegram(nome, prezzo, link, img_url):
-    """Invia il messaggio con l'immagine reale su Telegram."""
+def invia_telegram(nome, prezzo_nuovo, prezzo_vecchio, link, img_url):
+    """Invia il messaggio con entrambi i prezzi su Telegram."""
+    # Se il prezzo vecchio esiste, lo barriamo (formattazione strike-through)
+    info_prezzo = f"💰 *Prezzo:* ~~€{prezzo_vecchio}~~ → *€{prezzo_nuovo}*" if prezzo_vecchio != "N/D" else f"💰 *Prezzo:* *€{prezzo_nuovo}*"
+    
     testo = (
         f"🔹 *Nome:* *{nome}*\n"
-        f"💰 *Prezzo:* *€{prezzo}*\n"
+        f"{info_prezzo}\n"
         f"🔗 [APRI]({link})"
     )
     
@@ -37,7 +38,7 @@ def invia_telegram(nome, prezzo, link, img_url):
         "chat_id": TELEGRAM_CHAT_ID,
         "photo": img_url, 
         "caption": testo,
-        "parse_mode": "Markdown"
+        "parse_mode": "MarkdownV2" # Usiamo MarkdownV2 per il barrato (~~)
     }
     
     try:
@@ -67,7 +68,6 @@ async def run_bot():
             nuovi_trovati = 0
 
             for el in elementi:
-                # Estrazione Link (ID univoco)
                 link_elem = await el.query_selector('a')
                 link_raw = await link_elem.get_attribute('href')
                 link_completo = f"https://www.ikea.com/it/it/circular/second-hand/{link_raw}"
@@ -75,31 +75,38 @@ async def run_bot():
                 if link_completo in visti:
                     continue
 
-                # Estrazione dati visivi
+                # 1. Nome
                 nome_elem = await el.query_selector('.typography-heading-xs')
                 nome = await nome_elem.inner_text() if nome_elem else "N/D"
 
-                prezzi_elem = await el.query_selector_all('.price__integer')
-                prezzo = await prezzi_elem[-1].inner_text() if prezzi_elem else "N/D"
+                # 2. Prezzo Scontato (Nuovo)
+                prezzi_scontati = await el.query_selector_all('.price--medium .price__integer')
+                prezzo_nuovo = await prezzi_scontati[0].inner_text() if prezzi_scontati else "N/D"
 
+                # 3. Prezzo Precedente (Vecchio)
+                # IKEA usa spesso .price--small per il prezzo barrato
+                prezzi_vecchi = await el.query_selector_all('.price--small .price__integer')
+                prezzo_vecchio = await prezzi_vecchi[0].inner_text() if prezzi_vecchi else "N/D"
+
+                # 4. Immagine
                 img_elem = await el.query_selector('img.image')
                 img_url = await img_elem.get_attribute('src') if img_elem else ""
 
                 # Salva e Invia
-                salva_nuovo_prodotto(link_completo, nome, prezzo, img_url)
+                salva_nuovo_prodotto(link_completo, nome, prezzo_nuovo, img_url)
                 visti.add(link_completo)
                 nuovi_trovati += 1
                 
-                # Output log
+                # Output log migliorato
                 print(f"📦 PRODOTTO {nuovi_trovati}")
                 print(f"🔹 Nome: {nome}")
-                print(f"💰 Prezzo: €{prezzo}")
+                print(f"💰 Prezzo: €{prezzo_nuovo} (Precedente: €{prezzo_vecchio})")
                 print(f"🖼️ Immagine: {img_url}")
                 print(f"🔗 Link: {link_completo}")
                 print("-" * 40)
                 
                 # Invio Telegram
-                invia_telegram(nome, prezzo, link_completo, img_url)
+                invia_telegram(nome, prezzo_nuovo, prezzo_vecchio, link_completo, img_url)
 
             if nuovi_trovati == 0:
                 print("Nessuna novità stasera.")
