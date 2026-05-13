@@ -1,38 +1,35 @@
-name: Test IKEA Playwright
+name: IKEA Napoli Monitor
 on: 
   workflow_dispatch:
+  schedule:
+    # Esegue ogni sera alle 22:00 italiane (20:00 UTC)
+    - cron: '0 20 * * *'
 
 jobs:
-  run-test:
+  run-bot:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # Obbligatorio per permettere al bot di salvare il CSV nel repo
     steps:
-      - name: Checkout
+      - name: Checkout del codice
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Configurazione Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
-      - name: Installa Playwright
+      - name: Installazione Playwright e dipendenze
         run: |
-          pip install playwright
+          pip install playwright requests
           playwright install chromium --with-deps
 
-      - name: Esegui lo script
+      - name: Esecuzione Scraper
         run: python bot.py
 
-      - name: Salva i dati nel repository
+      - name: Sincronizzazione Database CSV
         run: |
-          git config --global user.name 'IKEA Bot'
-          git config --global user.email 'bot@ikea.it'
-          git add prodotti_visti.csv || echo "Nessun nuovo file"
-          git commit -m "Aggiornamento prodotti visti" || echo "Niente di nuovo da committare"
-          git push
-
-      - name: Carica Screenshot in caso di errore
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: error-screenshot
-          path: error.png
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add prodotti_visti.csv || echo "File non ancora creato"
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Aggiornamento prodotti visti" && git push)
