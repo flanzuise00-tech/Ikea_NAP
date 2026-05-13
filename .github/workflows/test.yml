@@ -1,0 +1,21 @@
+name: Test Manuale IKEA
+on: 
+  workflow_dispatch: # Questo abilita il tasto "Run" manuale
+
+jobs:
+  run-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout del codice
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Installa librerie
+        run: pip install requests beautifulsoup4
+
+      - name: Esegui lo script
+        run: python test_ikea.py
