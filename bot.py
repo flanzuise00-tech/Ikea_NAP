@@ -5,8 +5,8 @@ import requests
 from playwright.async_api import async_playwright
 
 # --- CONFIGURAZIONE DIRETTA ---
-TELEGRAM_TOKEN = "IL_TUO_TOKEN_QUI"
-TELEGRAM_CHAT_ID = "IL_TUO_CHAT_ID_QUI"
+TELEGRAM_TOKEN = "8716709088:AAHGPkPfjHmzIAoTSObLq9Z0vgDqBR3vQuU"
+TELEGRAM_CHAT_ID = "308359205"
 CSV_FILE = "prodotti_visti.csv"
 # ------------------------------
 
