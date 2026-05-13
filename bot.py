@@ -1,7 +1,27 @@
 import asyncio
+import csv
+import os
 from playwright.async_api import async_playwright
 
-async def run_test():
+# Nome del database CSV
+CSV_FILE = "prodotti_visti.csv"
+
+def carica_id_visti():
+    """Carica i link già presenti nel CSV per evitare duplicati."""
+    if not os.path.exists(CSV_FILE):
+        return set()
+    with open(CSV_FILE, mode='r', encoding='utf-8') as f:
+        reader = csv.reader(f)
+        # Assumiamo che il link sia nella prima colonna
+        return {row[0] for row in reader if row}
+
+def salva_nuovo_prodotto(link, nome, prezzo, img):
+    """Aggiunge un nuovo prodotto al file CSV."""
+    with open(CSV_FILE, mode='a', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f)
+        writer.writerow([link, nome, prezzo, img])
+
+async def run_bot():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context(
@@ -10,61 +30,54 @@ async def run_test():
         )
         page = await context.new_page()
 
+        visti = carica_id_visti()
         url = "https://www.ikea.com/it/it/circular/second-hand/#/napoli?sort=id-desc"
-        print(f"--- Navigazione verso: {url} ---")
         
         try:
-            # Caricamento rapido
+            print(f"--- Controllo nuovi arrivi IKEA Napoli ---")
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            
-            # Aspettiamo che appaiano i link dei prodotti
-            print("In attesa dei prodotti...")
             await page.wait_for_selector('li a[href*="/napoli/"]', timeout=45000)
             
-            # Selezioniamo tutti i blocchi prodotto
-            prodotti = await page.query_selector_all('li:has(a[href*="/napoli/"])')
-            print(f"🚀 Trovati {len(prodotti)} prodotti!\n")
+            elementi = await page.query_selector_all('li:has(a[href*="/napoli/"])')
+            nuovi_trovati = 0
 
-            for i, p in enumerate(prodotti[:15], 1):
-                try:
-                    # 1. Estrazione Nome
-                    nome_elem = await p.query_selector('.typography-heading-xs')
-                    nome = await nome_elem.inner_text() if nome_elem else "Nome non trovato"
+            for el in elementi:
+                # Estrazione Link (ID univoco)
+                link_elem = await el.query_selector('a')
+                link_raw = await link_elem.get_attribute('href') if link_elem else ""
+                link_completo = f"https://www.ikea.com/it/it/circular/second-hand/{link_raw}"
 
-                    # 2. Estrazione Prezzo Scontato
-                    # Cerchiamo l'elemento price__integer. Se ce ne sono due, il secondo è solitamente quello scontato
-                    prezzi_elem = await p.query_selector_all('.price__integer')
-                    if len(prezzi_elem) > 1:
-                        prezzo = await prezzi_elem[1].inner_text()
-                    elif len(prezzi_elem) == 1:
-                        prezzo = await prezzi_elem[0].inner_text()
-                    else:
-                        prezzo = "N/D"
+                # CONTROLLO DUPLICATI
+                if link_completo in visti:
+                    continue
 
-                    # 3. Estrazione Link Immagine
-                    img_elem = await p.query_selector('img.image')
-                    img_url = await img_elem.get_attribute('src') if img_elem else "No image"
+                # Se non è visto, estraiamo il resto
+                nome_elem = await el.query_selector('.typography-heading-xs')
+                nome = await nome_elem.inner_text() if nome_elem else "N/D"
 
-                    # 4. Estrazione Link Prodotto (per completezza)
-                    link_elem = await p.query_selector('a')
-                    link_href = await link_elem.get_attribute('href') if link_elem else ""
-                    link_completo = f"https://www.ikea.com/it/it/circular/second-hand/{link_href}"
+                prezzi_elem = await el.query_selector_all('.price__integer')
+                prezzo = await prezzi_elem[-1].inner_text() if prezzi_elem else "N/D"
 
-                    print(f"📦 PRODOTTO {i}")
-                    print(f"🔹 Nome: {nome}")
-                    print(f"💰 Prezzo: €{prezzo}")
-                    print(f"🖼️ Immagine: {img_url}")
-                    print(f"🔗 Link: {link_completo}")
-                    print("-" * 40)
+                img_elem = await el.query_selector('img.image')
+                img_url = await img_elem.get_attribute('src') if img_elem else ""
 
-                except Exception as e:
-                    print(f"⚠️ Errore nell'estrazione del prodotto {i}: {e}")
+                # Salva e segnala
+                salva_nuovo_prodotto(link_completo, nome, prezzo, img_url)
+                visti.add(link_completo) # Evita duplicati nello stesso ciclo
+                nuovi_trovati += 1
+                
+                print(f"✨ NUOVO: {nome} - €{prezzo}")
+                print(f"🔗 {link_completo}\n")
+
+            if nuovi_trovati == 0:
+                print("Nessun nuovo prodotto trovato rispetto all'ultimo controllo.")
+            else:
+                print(f"Fine. Trovati {nuovi_trovati} nuovi prodotti.")
 
         except Exception as e:
-            print(f"❌ Errore generale: {e}")
-            await page.screenshot(path="debug_timeout.png")
+            print(f"❌ Errore: {e}")
         
         await browser.close()
 
 if __name__ == "__main__":
-    asyncio.run(run_test())
+    asyncio.run(run_bot())
