@@ -1,12 +1,12 @@
-name: Test Manuale IKEA
+name: Test IKEA Playwright
 on: 
-  workflow_dispatch: # Questo abilita il tasto "Run" manuale
+  workflow_dispatch:
 
 jobs:
   run-test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout del codice
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -14,8 +14,17 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Installa librerie
-        run: pip install requests beautifulsoup4
+      - name: Installa Playwright
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps
 
       - name: Esegui lo script
-        run: python bot.py
+        run: python test_ikea_playwright.py
+
+      - name: Carica Screenshot in caso di errore
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-screenshot
+          path: error.png
