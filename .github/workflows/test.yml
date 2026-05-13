@@ -22,6 +22,14 @@ jobs:
       - name: Esegui lo script
         run: python bot.py
 
+      - name: Salva i dati nel repository
+        run: |
+          git config --global user.name 'IKEA Bot'
+          git config --global user.email 'bot@ikea.it'
+          git add prodotti_visti.csv || echo "Nessun nuovo file"
+          git commit -m "Aggiornamento prodotti visti" || echo "Niente di nuovo da committare"
+          git push
+
       - name: Carica Screenshot in caso di errore
         if: failure()
         uses: actions/upload-artifact@v4
