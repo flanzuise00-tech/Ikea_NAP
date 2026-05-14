@@ -29,20 +29,26 @@ def carica_storico():
     storico = {}
     if not os.path.exists(CSV_FILE):
         return storico
-    with open(CSV_FILE, mode='r', encoding='utf-8') as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if len(row) >= 2:
-                # row[0] è l'ID, row[2] è il prezzo attuale salvato
-                try:
-                    storico[row[0]] = float(row[2].replace(',', '.'))
-                except: continue
+    try:
+        with open(CSV_FILE, mode='r', encoding='utf-8') as f:
+            reader = csv.reader(f)
+            for row in reader:
+                if row and len(row) >= 3:
+                    identificativo = row[0].strip()
+                    try:
+                        # Prende il primo prezzo per il confronto (es: "2,97 - 3,20" -> 2.97)
+                        prezzo_val = float(row[2].split('-')[0].strip().replace(',', '.'))
+                        storico[identificativo] = prezzo_val
+                    except:
+                        continue
+        print(f"Storico caricato: {len(storico)} prodotti.")
+    except Exception as e:
+        print(f"Errore lettura CSV: {e}")
     return storico
 
 def salva_prodotto(prod_id, nome, prezzo_str, img_url):
-    # Salviamo sempre nel CSV per mantenere traccia
-    file_exists = os.path.isfile(CSV_FILE)
-    with open(CSV_FILE, mode='a', newline='', encoding='utf-8') as f:
+    # newline='\n' assicura che ogni record vada su una nuova riga
+    with open(CSV_FILE, mode='a', newline='\n', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow([prod_id, nome, prezzo_str, img_url])
 
@@ -79,7 +85,6 @@ async def run_bot():
         context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", locale="it-IT")
         page = await context.new_page()
         storico = carica_storico()
-        nuovi_prodotti_inseriti = 0
         
         try:
             await page.goto(URL_IKEA, wait_until="commit", timeout=60000)
@@ -91,13 +96,11 @@ async def run_bot():
             prodotti = await page.query_selector_all('li[aria-label]')
             for el in prodotti:
                 try:
-                    # NOME E DESCRIZIONE
                     nome_el = await el.query_selector('.typography-heading-xs')
                     desc_el = await el.query_selector('.typography-body-m.text--lighter')
                     nome = (await nome_el.inner_text()).strip() if nome_el else "Prodotto"
                     desc = (await desc_el.inner_text()).strip() if desc_el else ""
 
-                    # PREZZI
                     prezzi_sr = await el.query_selector_all('.price__sr-text')
                     val_nuovo_str = ""
                     val_vecchio_str = "N/D"
@@ -109,7 +112,6 @@ async def run_bot():
                             p_pulito = pulisci_prezzo(txt)
                             val_nuovo_str = f"{val_nuovo_str} - {p_pulito}" if val_nuovo_str else p_pulito
 
-                    # DISPONIBILITÀ
                     disp_txt = ""
                     list_items = await el.query_selector_all('.list-view-item__title')
                     for item in list_items:
@@ -119,7 +121,6 @@ async def run_bot():
                             if m_disp and int(m_disp.group(1)) > 1:
                                 disp_txt = f"{m_disp.group(1)} pezzi"
 
-                    # IMMAGINE E LINK
                     img_el = await el.query_selector('img')
                     img_url = await img_el.get_attribute('src') if img_el else ""
                     if img_url and img_url.startswith('data:'):
@@ -129,9 +130,8 @@ async def run_bot():
                     href = await link_el.get_attribute('href') if link_el else ""
                     link_completo = f"https://www.ikea.com/it/it/circular/second-hand/{href}" if (href and "#" in href) else URL_IKEA
                     
-                    # --- ID UNICO (SOLO TESTO E PREZZO) ---
-                    # Evitiamo l'immagine nell'ID perché cambia URL troppo spesso
-                    ident_str = f"{nome}_{desc}_{val_nuovo_str}".replace(" ", "").lower()
+                    # ID basato su nome e descrizione (senza spazi, minuscolo)
+                    ident_str = f"{nome}_{desc}".replace(" ", "").lower()
                     prod_id = hashlib.md5(ident_str.encode()).hexdigest()
 
                     val_attuale_float = float(val_nuovo_str.split('-')[0].strip().replace(',', '.'))
@@ -140,17 +140,13 @@ async def run_bot():
                         invia_telegram(nome, val_nuovo_str, val_vecchio_str, disp_txt, link_completo, img_url)
                         salva_prodotto(prod_id, nome, val_nuovo_str, img_url)
                         storico[prod_id] = val_attuale_float
-                        nuovi_prodotti_inseriti += 1
                     elif val_attuale_float < storico[prod_id]:
                         invia_telegram(nome, val_nuovo_str, val_vecchio_str, disp_txt, link_completo, img_url, ribasso=True)
                         salva_prodotto(prod_id, nome, val_nuovo_str, img_url)
                         storico[prod_id] = val_attuale_float
-                        nuovi_prodotti_inseriti += 1
                         
                     await asyncio.sleep(0.5)
                 except Exception: continue
-            
-            print(f"Scansione completata. {nuovi_prodotti_inseriti} novità trovate.")
         finally: await browser.close()
 
 if __name__ == "__main__":
