@@ -27,7 +27,6 @@ def carica_storico():
         for row in reader:
             if len(row) >= 3:
                 try:
-                    # Usiamo la colonna 0 come ID (che ora sarà il nostro hash)
                     storico[row[0]] = float(row[2].replace(',', '.'))
                 except: continue
     return storico
@@ -55,14 +54,18 @@ def crea_badge_sconto(url_img, sconto_percentuale):
     except: return None
 
 def invia_telegram(nome, p_nuovo, p_vecchio, link, img_url, ribasso=False):
+    # Trasformiamo in numeri per calcolare lo sconto reale
     try:
         val_n = float(p_nuovo.replace(',', '.'))
         val_v = float(p_vecchio.replace(',', '.')) if (p_vecchio != "N/D") else 0
     except: val_n, val_v = 0, 0
 
+    # Forza lo sconto a 0 se il prezzo vecchio è uguale o minore del nuovo
     sconto = round(((val_v - val_n) / val_v) * 100) if val_v > val_n else 0
+    
     titolo = f"📉 *RIBASSO:* {escape_markdown(nome)}" if ribasso else f"🔹 *{escape_markdown(nome)}*"
     
+    # Se abbiamo un prezzo vecchio valido e superiore al nuovo, usiamo la sbarratura
     if val_v > val_n:
         info_prezzo = f"💰 Prezzo: ~{escape_markdown(p_vecchio)}€~ → *{escape_markdown(p_nuovo)}€*\n🔥 *Risparmio:* {sconto}%"
     else:
@@ -70,7 +73,9 @@ def invia_telegram(nome, p_nuovo, p_vecchio, link, img_url, ribasso=False):
 
     testo = f"{titolo}\n\n{info_prezzo}\n\n🔗 [Apri offerta]({link})"
     url_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-    foto_con_badge = crea_badge_sconto(img_url, sconto) if sconto > 0 else None
+    
+    # Badge sulla foto solo se lo sconto è reale
+    foto_con_badge = crea_badge_sconto(img_url, sconto) if sconto > 5 else None
 
     try:
         if foto_con_badge:
@@ -112,32 +117,35 @@ async def run_bot():
                     if p_dec: val_nuovo_str += "," + (await p_dec.inner_text()).replace(",", "").strip()
                     val_nuovo_float = float(val_nuovo_str.replace(',', '.'))
 
-                    # 4. Link (se manca, puntiamo alla pagina generale di Napoli)
+                    # 4. Prezzo Vecchio / Calcolo Sconto
+                    val_vecchio_str = "N/D"
+                    # Prova a cercare il prezzo sbarrato classico
+                    p_old_el = await el.query_selector('.price--comparison .price__integer, .price--small .price__integer')
+                    
+                    # Prova a cercare il badge della percentuale (es. -30%)
+                    badge_el = await el.query_selector('.commercial-message')
+                    
+                    if p_old_el:
+                        val_vecchio_str = re.sub(r'[^\d,]', '', await p_old_el.inner_text()).strip()
+                    elif badge_el:
+                        # Se IKEA non scrive il prezzo vecchio, lo calcoliamo dalla percentuale
+                        txt_badge = await badge_el.inner_text()
+                        match = re.search(r'(\d+)', txt_badge)
+                        if match:
+                            perc = int(match.group(1))
+                            # Prezzo originale = Prezzo scontato / (1 - sconto/100)
+                            p_orig = val_nuovo_float / (1 - (perc / 100))
+                            val_vecchio_str = f"{p_orig:.2f}".replace('.', ',')
+
+                    # 5. Link e ID unico
                     link_el = await el.query_selector('a')
                     href = await link_el.get_attribute('href') if link_el else ""
                     link_completo = f"https://www.ikea.com/it/it/circular/second-hand/{href}" if (href and "#" in href) else URL_IKEA
+                    
+                    ident_str = f"{nome}_{val_nuovo_str}_{img_url}"
+                    prod_id = hashlib.md5(ident_str.encode()).hexdigest()
 
-                    # --- CREAZIONE ID UNICO (HASH) ---
-                    # Anche se il link manca, l'immagine + il nome + il prezzo creano una firma unica
-                    identificativo_stringa = f"{nome}_{val_nuovo_str}_{img_url}"
-                    prod_id = hashlib.md5(identificativo_stringa.encode()).hexdigest()
-
-                    # 5. Prezzo Vecchio / Sconto
-                    val_vecchio_str = "N/D"
-                    p_old_el = await el.query_selector('.price--comparison .price__integer, .price--small .price__integer')
-                    if p_old_el:
-                        val_vecchio_str = re.sub(r'[^\d,]', '', await p_old_el.inner_text()).strip()
-                    else:
-                        badge_sconto = await el.query_selector('.commercial-message')
-                        if badge_sconto:
-                            percent_text = await badge_sconto.inner_text()
-                            match = re.search(r'(\d+)', percent_text)
-                            if match:
-                                p_sconto = int(match.group(1))
-                                p_originale = val_nuovo_float / (1 - (p_sconto / 100))
-                                val_vecchio_str = f"{p_originale:.2f}".replace('.', ',')
-
-                    # --- LOGICA INVIO ---
+                    # --- INVIO ---
                     if prod_id not in storico:
                         invia_telegram(nome, val_nuovo_str, val_vecchio_str, link_completo, img_url, ribasso=False)
                         salva_prodotto(prod_id, nome, val_nuovo_str, img_url)
