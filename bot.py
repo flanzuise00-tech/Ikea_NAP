@@ -54,19 +54,23 @@ def crea_badge_sconto(url_img, sconto_percentuale):
     except: return None
 
 def invia_telegram(nome, p_nuovo, p_vecchio, link, img_url, ribasso=False):
-    # Trasformiamo in numeri per calcolare lo sconto reale
+    # Trasformiamo in numeri per gestire la logica
     try:
         val_n = float(p_nuovo.replace(',', '.'))
         val_v = float(p_vecchio.replace(',', '.')) if (p_vecchio != "N/D") else 0
     except: val_n, val_v = 0, 0
 
-    # Forza lo sconto a 0 se il prezzo vecchio è uguale o minore del nuovo
-    sconto = round(((val_v - val_n) / val_v) * 100) if val_v > val_n else 0
-    
+    # Calcoliamo lo sconto percentuale
+    sconto = 0
+    if val_v > val_n:
+        sconto = round(((val_v - val_n) / val_v) * 100)
+
+    # Titolo (solo nome)
     titolo = f"📉 *RIBASSO:* {escape_markdown(nome)}" if ribasso else f"🔹 *{escape_markdown(nome)}*"
     
-    # Se abbiamo un prezzo vecchio valido e superiore al nuovo, usiamo la sbarratura
+    # Costruzione stringa prezzi
     if val_v > val_n:
+        # MarkdownV2: ~testo~ produce il barrato
         info_prezzo = f"💰 Prezzo: ~{escape_markdown(p_vecchio)}€~ → *{escape_markdown(p_nuovo)}€*\n🔥 *Risparmio:* {sconto}%"
     else:
         info_prezzo = f"💰 Prezzo: *{escape_markdown(p_nuovo)}€*"
@@ -74,7 +78,6 @@ def invia_telegram(nome, p_nuovo, p_vecchio, link, img_url, ribasso=False):
     testo = f"{titolo}\n\n{info_prezzo}\n\n🔗 [Apri offerta]({link})"
     url_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
     
-    # Badge sulla foto solo se lo sconto è reale
     foto_con_badge = crea_badge_sconto(img_url, sconto) if sconto > 5 else None
 
     try:
@@ -100,59 +103,57 @@ async def run_bot():
             prodotti = await page.query_selector_all('li[aria-label]')
             for el in prodotti:
                 try:
-                    # 1. Nome
+                    # NOME
                     nome_el = await el.query_selector('.typography-heading-xs')
                     nome = (await nome_el.inner_text()).strip() if nome_el else "Prodotto"
 
-                    # 2. Immagine
-                    img_el = await el.query_selector('img')
-                    img_url = await img_el.get_attribute('src') if img_el else ""
-                    if img_url and img_url.startswith('data:'):
-                        img_url = await img_el.get_attribute('data-src') or img_url
-
-                    # 3. Prezzo attuale
+                    # PREZZO ATTUALE
                     p_int = await el.query_selector('.price__integer')
                     p_dec = await el.query_selector('.price__decimal')
-                    val_nuovo_str = (await p_int.inner_text()).strip() if p_int else "0"
-                    if p_dec: val_nuovo_str += "," + (await p_dec.inner_text()).replace(",", "").strip()
-                    val_nuovo_float = float(val_nuovo_str.replace(',', '.'))
+                    v_n_str = (await p_int.inner_text()).strip() if p_int else "0"
+                    if p_dec: v_n_str += "," + (await p_dec.inner_text()).replace(",", "").strip()
+                    val_nuovo_float = float(v_n_str.replace(',', '.'))
 
-                    # 4. Prezzo Vecchio / Calcolo Sconto
+                    # PREZZO VECCHIO (LOGICA NUOVA)
                     val_vecchio_str = "N/D"
-                    # Prova a cercare il prezzo sbarrato classico
+                    # 1. Prova a cercare il prezzo barrato se esiste
                     p_old_el = await el.query_selector('.price--comparison .price__integer, .price--small .price__integer')
-                    
-                    # Prova a cercare il badge della percentuale (es. -30%)
+                    # 2. Cerca il bollino sconto (es. -30%)
                     badge_el = await el.query_selector('.commercial-message')
                     
                     if p_old_el:
                         val_vecchio_str = re.sub(r'[^\d,]', '', await p_old_el.inner_text()).strip()
                     elif badge_el:
-                        # Se IKEA non scrive il prezzo vecchio, lo calcoliamo dalla percentuale
+                        # Se non c'è il prezzo vecchio scritto, lo calcoliamo dalla % del bollino
                         txt_badge = await badge_el.inner_text()
                         match = re.search(r'(\d+)', txt_badge)
                         if match:
                             perc = int(match.group(1))
-                            # Prezzo originale = Prezzo scontato / (1 - sconto/100)
                             p_orig = val_nuovo_float / (1 - (perc / 100))
                             val_vecchio_str = f"{p_orig:.2f}".replace('.', ',')
 
-                    # 5. Link e ID unico
+                    # IMMAGINE E LINK
+                    img_el = await el.query_selector('img')
+                    img_url = await img_el.get_attribute('src') if img_el else ""
+                    if img_url and img_url.startswith('data:'):
+                        img_url = await img_el.get_attribute('data-src') or img_url
+
                     link_el = await el.query_selector('a')
                     href = await link_el.get_attribute('href') if link_el else ""
                     link_completo = f"https://www.ikea.com/it/it/circular/second-hand/{href}" if (href and "#" in href) else URL_IKEA
                     
-                    ident_str = f"{nome}_{val_nuovo_str}_{img_url}"
+                    # ID UNICO (Hash di Nome + Prezzo + Immagine)
+                    ident_str = f"{nome}_{v_n_str}_{img_url}"
                     prod_id = hashlib.md5(ident_str.encode()).hexdigest()
 
-                    # --- INVIO ---
+                    # INVIO
                     if prod_id not in storico:
-                        invia_telegram(nome, val_nuovo_str, val_vecchio_str, link_completo, img_url, ribasso=False)
-                        salva_prodotto(prod_id, nome, val_nuovo_str, img_url)
+                        invia_telegram(nome, v_n_str, val_vecchio_str, link_completo, img_url, ribasso=False)
+                        salva_prodotto(prod_id, nome, v_n_str, img_url)
                         storico[prod_id] = val_nuovo_float
                     elif val_nuovo_float < storico[prod_id]:
-                        invia_telegram(nome, val_nuovo_str, val_vecchio_str, link_completo, img_url, ribasso=True)
-                        salva_prodotto(prod_id, nome, val_nuovo_str, img_url)
+                        invia_telegram(nome, v_n_str, val_vecchio_str, link_completo, img_url, ribasso=True)
+                        salva_prodotto(prod_id, nome, v_n_str, img_url)
                         storico[prod_id] = val_nuovo_float
                         
                     await asyncio.sleep(0.5)
