@@ -30,10 +30,11 @@ def salva_nuovo_prodotto(link, nome, prezzo, img):
 
 def calcola_risparmio(nuovo, vecchio):
     try:
-        # Pulizia stringhe (rimuove € e converte virgola in punto)
-        n = float(nuovo.replace('€', '').replace(',', '.').strip())
-        v = float(vecchio.replace('€', '').replace(',', '.').strip())
-        if v <= 0: return 0
+        n_str = re.sub(r'[^\d.,]', '', nuovo).replace(',', '.')
+        v_str = re.sub(r'[^\d.,]', '', vecchio).replace(',', '.')
+        n = float(n_str)
+        v = float(v_str)
+        if v <= n: return 0
         percentuale = ((v - n) / v) * 100
         return round(percentuale)
     except:
@@ -65,35 +66,38 @@ def invia_telegram(nome, prezzo_nuovo, prezzo_vecchio, link, img_url):
     try:
         r = requests.post(url_api, data=payload)
         r.raise_for_status()
-    except Exception as e:
-        print(f"⚠️ Errore Telegram: {r.text}")
+    except Exception:
+        print(f"⚠️ Errore Telegram per {nome}: {r.text}")
 
 async def run_bot():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent="Mozilla/5.0...", locale="it-IT")
+        context = await browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            locale="it-IT"
+        )
         page = await context.new_page()
         visti = carica_id_visti()
         
         try:
+            print(f"Navigazione su IKEA Napoli...")
             await page.goto(URL_IKEA, wait_until="domcontentloaded", timeout=60000)
-            await asyncio.sleep(7)
+            await asyncio.sleep(8)
             
-            # Scroll per caricare i prodotti
-            for _ in range(3):
-                await page.mouse.wheel(0, 1500)
+            for i in range(3):
+                await page.mouse.wheel(0, 2000)
                 await asyncio.sleep(2)
 
-            await page.wait_for_selector('li:has(a[href*="/napoli/"])', timeout=30000)
-            elementi = await page.query_selector_all('li:has(a[href*="/napoli/"])')
+            selector = 'li:has(a[href*="/napoli/"])'
+            await page.wait_for_selector(selector, timeout=30000)
+            elementi = await page.query_selector_all(selector)
 
+            print(f"\n✅ SCANSIONE COMPLETATA")
+            print(f"📦 Prodotti totali trovati sulla pagina: {len(elementi)}")
+            print(f"------------------------------------------")
+
+            nuovi_contatore = 0
             for el in elementi:
-                # --- STAMPA HTML NEL TERMINALE ---
-                html_prodotto = await el.outer_html()
-                print("\n--- DEBUG HTML PRODOTTO ---")
-                print(html_prodotto)
-                print("---------------------------\n")
-
                 try:
                     link_elem = await el.query_selector('a')
                     href = await link_elem.get_attribute('href')
@@ -102,9 +106,8 @@ async def run_bot():
                     if link_completo in visti: continue
 
                     nome_elem = await el.query_selector('h3, span[class*="heading"]')
-                    nome = (await nome_elem.inner_text()).strip() if nome_elem else "Prodotto"
+                    nome = (await nome_elem.inner_text()).strip() if nome_elem else "Prodotto IKEA"
 
-                    # Estrazione prezzi (con gestione selettori IKEA)
                     p_nuovo_el = await el.query_selector('.price--medium .price__integer, .price__integer')
                     prezzo_nuovo = await p_nuovo_el.inner_text() if p_nuovo_el else "0"
 
@@ -117,12 +120,19 @@ async def run_bot():
                     salva_nuovo_prodotto(link_completo, nome, prezzo_nuovo, img_url)
                     visti.add(link_completo)
                     invia_telegram(nome, prezzo_nuovo, prezzo_vecchio, link_completo, img_url)
+                    
+                    nuovi_contatore += 1
+                    print(f"✨ [NUOVO] {nome} - {prezzo_nuovo}€")
                     await asyncio.sleep(1) 
 
-                except Exception: continue
+                except Exception:
+                    continue
+
+            print(f"------------------------------------------")
+            print(f"🚀 Fine. Nuovi prodotti inviati: {nuovi_contatore}\n")
 
         except Exception as e:
-            print(f"❌ Errore: {e}")
+            print(f"❌ Errore generale: {e}")
         finally:
             await browser.close()
 
