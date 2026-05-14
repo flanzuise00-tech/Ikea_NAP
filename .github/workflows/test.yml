@@ -1,7 +1,7 @@
 name: IKEA Napoli Monitor
 
 on:
-   workflow_dispatch: # Permette l'avvio manuale
+  workflow_dispatch: # Avvio manuale da scheda Actions
 
 jobs:
   build:
@@ -31,15 +31,19 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Scarica i cambiamenti remoti per evitare conflitti (Fetch + Rebase)
-          git pull origin main --rebase
-          
+          # Aggiungiamo il file modificato allo stage
           git add prodotti_visti.csv
           
-          # Commit solo se il CSV è cambiato
-          if git diff --quiet && git diff --staged --quiet; then
-            echo "Nessun nuovo prodotto da salvare."
+          # Controlliamo se ci sono effettivamente nuovi prodotti (commit locale)
+          if git diff --staged --quiet; then
+            echo "Nessun nuovo prodotto rilevato."
           else
             git commit -m "Aggiornato storico prodotti [skip ci]"
+            
+            # Sincronizziamo con il server: scarichiamo i cambiamenti e mettiamo i nostri sopra
+            # Usiamo -X ours per dare la precedenza ai dati appena scaricati dal bot in caso di conflitti
+            git pull origin main --rebase -X ours
+            
+            # Invio finale
             git push origin main
           fi
