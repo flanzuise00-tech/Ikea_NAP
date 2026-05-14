@@ -32,7 +32,8 @@ def carica_storico():
         reader = csv.reader(f)
         for row in reader:
             if len(row) >= 3:
-                try: storico[row[0]] = float(row[2].replace(',', '.'))
+                try:
+                    storico[row[0]] = float(row[2].replace(',', '.'))
                 except: continue
     return storico
 
@@ -48,7 +49,6 @@ def invia_telegram(nome, p_nuovo, p_vecchio, disp, link, img_url, ribasso=False)
     except: val_n, val_v = 0, 0
 
     sconto = round(((val_v - val_n) / val_v) * 100) if val_v > val_n else 0
-    
     titolo = f"📉 *RIBASSO:* {escape_markdown(nome)}" if ribasso else f"🔹 *{escape_markdown(nome)}*"
     
     if val_v > val_n:
@@ -56,12 +56,10 @@ def invia_telegram(nome, p_nuovo, p_vecchio, disp, link, img_url, ribasso=False)
     else:
         info_prezzo = f"💰 Prezzo: *{escape_markdown(p_nuovo)}€*"
 
-    # Mostra disponibilità solo se superiore a 1
     disponibilita = f"\n📦 *Disponibilità:* {escape_markdown(disp)}" if disp else ""
-
     testo = f"{titolo}\n\n{info_prezzo}{disponibilita}\n\n🔗 [Apri offerta]({link})"
-    url_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
     
+    url_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
     try:
         requests.post(url_api, data={
             "chat_id": TELEGRAM_CHAT_ID, 
@@ -74,7 +72,7 @@ def invia_telegram(nome, p_nuovo, p_vecchio, disp, link, img_url, ribasso=False)
 async def run_bot():
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent="Mozilla/5.0...", locale="it-IT")
+        context = await browser.new_context(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36", locale="it-IT")
         page = await context.new_page()
         storico = carica_storico()
         
@@ -91,10 +89,10 @@ async def run_bot():
                     nome_el = await el.query_selector('.typography-heading-xs')
                     nome = (await nome_el.inner_text()).strip() if nome_el else "Prodotto"
 
+                    # Prezzi tramite SR-TEXT
                     prezzi_sr = await el.query_selector_all('.price__sr-text')
                     val_nuovo_str = ""
                     val_vecchio_str = "N/D"
-
                     for psr in prezzi_sr:
                         txt = await psr.inner_text()
                         if "Prezzo precedente" in txt:
@@ -103,40 +101,41 @@ async def run_bot():
                             p_pulito = pulisci_prezzo(txt)
                             val_nuovo_str = f"{val_nuovo_str} - {p_pulito}" if val_nuovo_str else p_pulito
 
-                    # --- LOGICA DISPONIBILITÀ AGGIORNATA ---
+                    # Disponibilità (> 1)
                     disp_txt = ""
                     list_items = await el.query_selector_all('.list-view-item__title')
                     for item in list_items:
                         it_txt = await item.inner_text()
                         if "Disponibile" in it_txt:
-                            match_disp = re.search(r'(\d+)', it_txt)
-                            if match_disp:
-                                quantita = int(match_disp.group(1))
-                                # Scrive solo se la quantità è maggiore di 1
-                                if quantita > 1:
-                                    disp_txt = f"{quantita} pezzi"
-                            # Se non c'è numero ma dice solo "Disponibile", non facciamo nulla (assumiamo 1)
+                            m_disp = re.search(r'(\d+)', it_txt)
+                            if m_disp and int(m_disp.group(1)) > 1:
+                                disp_txt = f"{m_disp.group(1)} pezzi"
 
+                    # Immagine e Link
                     img_el = await el.query_selector('img')
                     img_url = await img_el.get_attribute('src') if img_el else ""
                     if img_url and img_url.startswith('data:'):
                         img_url = await img_el.get_attribute('data-src') or img_url
-
+                    
                     link_el = await el.query_selector('a')
                     href = await link_el.get_attribute('href') if link_el else ""
                     link_completo = f"https://www.ikea.com/it/it/circular/second-hand/{href}" if (href and "#" in href) else URL_IKEA
                     
-                    ident_str = f"{nome}_{val_nuovo_str}_{img_url}"
+                    # ID unico per evitare doppioni
+                    img_id_base = img_url.split('?')[0] if img_url else ""
+                    ident_str = f"{nome.replace(' ', '')}_{val_nuovo_str.replace(' ', '')}_{img_id_base}"
                     prod_id = hashlib.md5(ident_str.encode()).hexdigest()
+
+                    val_attuale_float = float(val_nuovo_str.split('-')[0].strip().replace(',', '.'))
 
                     if prod_id not in storico:
                         invia_telegram(nome, val_nuovo_str, val_vecchio_str, disp_txt, link_completo, img_url)
                         salva_prodotto(prod_id, nome, val_nuovo_str, img_url)
-                        storico[prod_id] = float(val_nuovo_str.split('-')[0].strip().replace(',', '.'))
-                    elif float(val_nuovo_str.split('-')[0].strip().replace(',', '.')) < storico[prod_id]:
+                        storico[prod_id] = val_attuale_float
+                    elif val_attuale_float < storico[prod_id]:
                         invia_telegram(nome, val_nuovo_str, val_vecchio_str, disp_txt, link_completo, img_url, ribasso=True)
                         salva_prodotto(prod_id, nome, val_nuovo_str, img_url)
-                        storico[prod_id] = float(val_nuovo_str.split('-')[0].strip().replace(',', '.'))
+                        storico[prod_id] = val_attuale_float
                         
                     await asyncio.sleep(0.5)
                 except Exception: continue
