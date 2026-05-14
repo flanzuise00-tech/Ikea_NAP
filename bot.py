@@ -4,6 +4,7 @@ import os
 import requests
 import re
 import io
+import hashlib
 from playwright.async_api import async_playwright
 from PIL import Image, ImageDraw
 
@@ -26,6 +27,7 @@ def carica_storico():
         for row in reader:
             if len(row) >= 3:
                 try:
+                    # Usiamo la colonna 0 come ID (che ora sarà il nostro hash)
                     storico[row[0]] = float(row[2].replace(',', '.'))
                 except: continue
     return storico
@@ -43,35 +45,30 @@ def crea_badge_sconto(url_img, sconto_percentuale):
         draw = ImageDraw.Draw(overlay)
         w, h = img.size
         size = int(w * 0.25)
-        # Bollino rosso
         draw.ellipse([10, 10, size, size], fill=(224, 15, 25, 240))
         testo = f"-{sconto_percentuale}%"
-        # Posizionamento testo approssimativo per font standard
         draw.text((size//4, size//2.5), testo, fill="white")
         out = Image.alpha_composite(img, overlay).convert("RGB")
         img_byte_arr = io.BytesIO()
         out.save(img_byte_arr, format='JPEG')
         return img_byte_arr.getvalue()
-    except:
-        return None
+    except: return None
 
 def invia_telegram(nome, p_nuovo, p_vecchio, link, img_url, ribasso=False):
-    val_n = float(p_nuovo.replace(',', '.'))
-    # Se il prezzo vecchio è N/D o uguale al nuovo, lo sconto è 0
-    val_v = float(p_vecchio.replace(',', '.')) if (p_vecchio != "N/D" and p_vecchio != p_nuovo) else 0
-    sconto = round(((val_v - val_n) / val_v) * 100) if val_v > val_n else 0
+    try:
+        val_n = float(p_nuovo.replace(',', '.'))
+        val_v = float(p_vecchio.replace(',', '.')) if (p_vecchio != "N/D") else 0
+    except: val_n, val_v = 0, 0
 
-    # Titolo richiesto: Solo il nome del prodotto
+    sconto = round(((val_v - val_n) / val_v) * 100) if val_v > val_n else 0
     titolo = f"📉 *RIBASSO:* {escape_markdown(nome)}" if ribasso else f"🔹 *{escape_markdown(nome)}*"
     
-    # Formattazione prezzo
-    if sconto > 0:
-        info_prezzo = f"💰 *Prezzo:* ~{escape_markdown(p_vecchio)}€~ → *{escape_markdown(p_nuovo)}€*\n🔥 *Risparmio:* {sconto}%"
+    if val_v > val_n:
+        info_prezzo = f"💰 Prezzo: ~{escape_markdown(p_vecchio)}€~ → *{escape_markdown(p_nuovo)}€*\n🔥 *Risparmio:* {sconto}%"
     else:
-        info_prezzo = f"💰 *Prezzo:* *{escape_markdown(p_nuovo)}€*"
+        info_prezzo = f"💰 Prezzo: *{escape_markdown(p_nuovo)}€*"
 
     testo = f"{titolo}\n\n{info_prezzo}\n\n🔗 [Apri offerta]({link})"
-
     url_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
     foto_con_badge = crea_badge_sconto(img_url, sconto) if sconto > 0 else None
 
@@ -81,8 +78,7 @@ def invia_telegram(nome, p_nuovo, p_vecchio, link, img_url, ribasso=False):
             requests.post(url_api, data={"chat_id": TELEGRAM_CHAT_ID, "caption": testo, "parse_mode": "MarkdownV2"}, files=files, timeout=15)
         else:
             requests.post(url_api, data={"chat_id": TELEGRAM_CHAT_ID, "photo": img_url, "caption": testo, "parse_mode": "MarkdownV2"}, timeout=15)
-    except:
-        print(f"❌ Errore invio Telegram")
+    except: pass
 
 async def run_bot():
     async with async_playwright() as p:
@@ -92,54 +88,56 @@ async def run_bot():
         storico = carica_storico()
         
         try:
-            print("Avvio navigazione...")
             await page.goto(URL_IKEA, wait_until="commit", timeout=60000)
             await asyncio.sleep(10)
-            
-            for _ in range(8):
-                await page.mouse.wheel(0, 1000)
-                await asyncio.sleep(1.5)
+            for _ in range(8): await page.mouse.wheel(0, 1000); await asyncio.sleep(1.5)
 
             prodotti = await page.query_selector_all('li[aria-label]')
-            print(f"Prodotti trovati: {len(prodotti)}")
-
             for el in prodotti:
                 try:
-                    link_el = await el.query_selector('a')
-                    href = await link_el.get_attribute('href') if link_el else ""
-                    prod_id = href if (href and href != "#") else await el.get_attribute('aria-label')
-
+                    # 1. Nome
                     nome_el = await el.query_selector('.typography-heading-xs')
                     nome = (await nome_el.inner_text()).strip() if nome_el else "Prodotto"
 
-                    # Estrazione Prezzo Nuovo
-                    p_int = await el.query_selector('.price__integer')
-                    p_dec = await el.query_selector('.price__decimal')
-                    val_nuovo_str = (await p_int.inner_text()).strip() if p_int else "0"
-                    if p_dec:
-                        dec_txt = (await p_dec.inner_text()).replace(",", "").strip()
-                        val_nuovo_str += f",{dec_txt}"
-                    
-                    val_nuovo_float = float(val_nuovo_str.replace(',', '.'))
-
-                    # Estrazione Prezzo Vecchio (Più robusta)
-                    # Cerchiamo lo span che contiene il prezzo originale sbarrato
-                    p_old_el = await el.query_selector('.price--comparison .price__integer, .price--small .price__integer, span[class*="price__value"] ~ span')
-                    if p_old_el:
-                        val_vecchio_str = (await p_old_el.inner_text()).strip()
-                        # Pulizia da eventuali simboli € o testi extra
-                        val_vecchio_str = re.sub(r'[^\d,]', '', val_vecchio_str)
-                    else:
-                        val_vecchio_str = "N/D"
-
+                    # 2. Immagine
                     img_el = await el.query_selector('img')
                     img_url = await img_el.get_attribute('src') if img_el else ""
                     if img_url and img_url.startswith('data:'):
                         img_url = await img_el.get_attribute('data-src') or img_url
 
-                    link_completo = f"https://www.ikea.com/it/it/circular/second-hand/{href}" if "#" in href else URL_IKEA
+                    # 3. Prezzo attuale
+                    p_int = await el.query_selector('.price__integer')
+                    p_dec = await el.query_selector('.price__decimal')
+                    val_nuovo_str = (await p_int.inner_text()).strip() if p_int else "0"
+                    if p_dec: val_nuovo_str += "," + (await p_dec.inner_text()).replace(",", "").strip()
+                    val_nuovo_float = float(val_nuovo_str.replace(',', '.'))
 
-                    # Logica Invio
+                    # 4. Link (se manca, puntiamo alla pagina generale di Napoli)
+                    link_el = await el.query_selector('a')
+                    href = await link_el.get_attribute('href') if link_el else ""
+                    link_completo = f"https://www.ikea.com/it/it/circular/second-hand/{href}" if (href and "#" in href) else URL_IKEA
+
+                    # --- CREAZIONE ID UNICO (HASH) ---
+                    # Anche se il link manca, l'immagine + il nome + il prezzo creano una firma unica
+                    identificativo_stringa = f"{nome}_{val_nuovo_str}_{img_url}"
+                    prod_id = hashlib.md5(identificativo_stringa.encode()).hexdigest()
+
+                    # 5. Prezzo Vecchio / Sconto
+                    val_vecchio_str = "N/D"
+                    p_old_el = await el.query_selector('.price--comparison .price__integer, .price--small .price__integer')
+                    if p_old_el:
+                        val_vecchio_str = re.sub(r'[^\d,]', '', await p_old_el.inner_text()).strip()
+                    else:
+                        badge_sconto = await el.query_selector('.commercial-message')
+                        if badge_sconto:
+                            percent_text = await badge_sconto.inner_text()
+                            match = re.search(r'(\d+)', percent_text)
+                            if match:
+                                p_sconto = int(match.group(1))
+                                p_originale = val_nuovo_float / (1 - (p_sconto / 100))
+                                val_vecchio_str = f"{p_originale:.2f}".replace('.', ',')
+
+                    # --- LOGICA INVIO ---
                     if prod_id not in storico:
                         invia_telegram(nome, val_nuovo_str, val_vecchio_str, link_completo, img_url, ribasso=False)
                         salva_prodotto(prod_id, nome, val_nuovo_str, img_url)
