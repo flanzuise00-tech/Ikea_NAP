@@ -1,16 +1,18 @@
 name: IKEA Napoli Monitor
 
 on:
-  workflow_dispatch: # Avvio manuale da scheda Actions
+  workflow_dispatch: 
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
         with:
-          persist-credentials: true
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -31,19 +33,15 @@ jobs:
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           
-          # Aggiungiamo il file modificato allo stage
+          # Assicura l'esistenza del file
+          touch prodotti_visti.csv
           git add prodotti_visti.csv
           
-          # Controlliamo se ci sono effettivamente nuovi prodotti (commit locale)
           if git diff --staged --quiet; then
-            echo "Nessun nuovo prodotto rilevato."
+            echo "Nessun nuovo prodotto."
           else
-            git commit -m "Aggiornato storico prodotti [skip ci]"
-            
-            # Sincronizziamo con il server: scarichiamo i cambiamenti e mettiamo i nostri sopra
-            # Usiamo -X ours per dare la precedenza ai dati appena scaricati dal bot in caso di conflitti
-            git pull origin main --rebase -X ours
-            
-            # Invio finale
+            git commit -m "Aggiornato storico [skip ci]"
+            # Pull per sincronizzare eventuali modifiche remote (es. se hai pulito il CSV a mano)
+            git pull origin main --rebase
             git push origin main
           fi
