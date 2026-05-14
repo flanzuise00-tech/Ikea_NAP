@@ -1,49 +1,45 @@
-name: Ikea Napoli Bot Scan
+name: IKEA Napoli Monitor
 
 on:
-  schedule:
-    # Esegue il bot ogni 30 minuti
-    - cron: '*/30 * * * *'
-  workflow_dispatch:
-    # Permette di avviarlo manualmente dal tasto "Run workflow"
-
-permissions:
-  contents: write
+   workflow_dispatch: # Permette l'avvio manuale
 
 jobs:
-  run-bot:
+  build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: true
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.10'
-          cache: 'pip'
+          python-version: '3.9'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          # Installa i file necessari per far girare il browser Playwright
-          playwright install chromium --with-deps
+          pip install playwright requests
+          playwright install chromium
 
-      - name: Run Bot Scan
-        env:
-          # Se preferisci non scrivere i token nel codice, puoi usarli come "Secrets"
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      - name: Run monitor script
         run: python bot.py
 
       - name: Commit and push changes
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          # Aggiunge il file CSV aggiornato per non reinviare gli stessi prodotti
+          
+          # Scarica i cambiamenti remoti per evitare conflitti (Fetch + Rebase)
+          git pull origin main --rebase
+          
           git add prodotti_visti.csv
-          # Esegue il commit solo se ci sono nuovi prodotti
-          git commit -m "Aggiornato storico prodotti" || echo "Nessun nuovo prodotto trovato."
-          git push
+          
+          # Commit solo se il CSV è cambiato
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "Nessun nuovo prodotto da salvare."
+          else
+            git commit -m "Aggiornato storico prodotti [skip ci]"
+            git push origin main
+          fi
