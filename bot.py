@@ -87,4 +87,73 @@ async def run_bot():
             
             # Selettore basato sull'analisi del tuo file HTML (li con aria-label)
             selector_prod = 'li[aria-label]'
-            await page.wait_for_selector(
+            await page.wait_for_selector(selector_prod, timeout=20000)
+            elementi = await page.query_selector_all(selector_prod)
+
+            print(f"\n✅ SCANSIONE COMPLETATA")
+            print(f"📦 Prodotti rilevati sulla pagina: {len(elementi)}")
+            print(f"------------------------------------------")
+
+            nuovi_contatore = 0
+            for el in elementi:
+                try:
+                    # Estrazione Link
+                    link_el = await el.query_selector('a')
+                    href = await link_el.get_attribute('href') if link_el else ""
+                    
+                    # Generiamo un ID unico basato sull'href o sull'aria-label se l'href manca
+                    prod_id = href if (href and href != "#") else await el.get_attribute('aria-label')
+                    
+                    if not prod_id or prod_id in visti:
+                        continue
+
+                    # Nome e Descrizione
+                    nome_el = await el.query_selector('.typography-heading-xs')
+                    nome = (await nome_el.inner_text()).strip() if nome_el else "Prodotto IKEA"
+                    
+                    desc_el = await el.query_selector('.typography-body-m')
+                    desc = (await desc_el.inner_text()).strip() if desc_el else ""
+
+                    # Prezzo Nuovo (Integer + Decimal)
+                    p_int = await el.query_selector('.price__integer')
+                    p_dec = await el.query_selector('.price__decimal')
+                    val_nuovo = await p_int.inner_text() if p_int else "0"
+                    if p_dec:
+                        dec_txt = await p_dec.inner_text()
+                        val_nuovo += dec_txt if ',' in dec_txt else f",{dec_txt}"
+
+                    # Prezzo Vecchio
+                    p_old = await el.query_selector('.price--comparison .price__integer, .price--small .price__integer')
+                    val_vecchio = await p_old.inner_text() if p_old else "N/D"
+
+                    # Immagine (gestione lazy loading)
+                    img_el = await el.query_selector('img')
+                    img_url = await img_el.get_attribute('src') if img_el else ""
+                    if img_url and img_url.startswith('data:image'): # Se è un placeholder, cerca data-src
+                         img_url = await img_el.get_attribute('data-src') or img_url
+
+                    # Costruzione link finale
+                    link_completo = f"https://www.ikea.com/it/it/circular/second-hand/{href}" if (href and "#" in href) else URL_IKEA
+
+                    # Invio e Salvataggio
+                    invia_telegram(nome, desc, val_nuovo, val_vecchio, link_completo, img_url)
+                    salva_nuovo_prodotto(prod_id, nome, val_nuovo, img_url)
+                    visti.add(prod_id)
+                    
+                    nuovi_contatore += 1
+                    print(f"✨ [NUOVO] {nome} - {val_nuovo}€")
+                    await asyncio.sleep(1) # Delay anti-spam Telegram
+
+                except Exception as e:
+                    continue
+
+            print(f"------------------------------------------")
+            print(f"🚀 Fine. Nuovi prodotti inviati: {nuovi_contatore}\n")
+
+        except Exception as e:
+            print(f"❌ Errore generale durante l'esecuzione: {e}")
+        finally:
+            await browser.close()
+
+if __name__ == "__main__":
+    asyncio.run(run_bot())
