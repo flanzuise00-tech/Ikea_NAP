@@ -8,7 +8,8 @@ from playwright.async_api import async_playwright
 
 # --- CONFIGURAZIONE ---
 TELEGRAM_TOKEN = "8716709088:AAHGPkPfjHmzIAoTSObLq9Z0vgDqBR3vQuU"
-TELEGRAM_CHAT_ID = "308359205"
+# Ora usiamo una lista di ID
+TELEGRAM_CHAT_IDS = ["308359205", "8818283555"] 
 CSV_FILE = "prodotti_visti.csv"
 URL_IKEA = "https://www.ikea.com/it/it/circular/second-hand/#/napoli?sort=id-desc"
 
@@ -36,7 +37,6 @@ def carica_storico():
                 if row and len(row) >= 3:
                     identificativo = row[0].strip()
                     try:
-                        # Prende il primo prezzo per il confronto (es: "2,97 - 3,20" -> 2.97)
                         prezzo_val = float(row[2].split('-')[0].strip().replace(',', '.'))
                         storico[identificativo] = prezzo_val
                     except:
@@ -47,7 +47,6 @@ def carica_storico():
     return storico
 
 def salva_prodotto(prod_id, nome, prezzo_str, img_url):
-    # newline='\n' assicura che ogni record vada su una nuova riga
     with open(CSV_FILE, mode='a', newline='\n', encoding='utf-8') as f:
         writer = csv.writer(f)
         writer.writerow([prod_id, nome, prezzo_str, img_url])
@@ -70,14 +69,18 @@ def invia_telegram(nome, p_nuovo, p_vecchio, disp, link, img_url, ribasso=False)
     testo = f"{titolo}\n\n{info_prezzo}{disponibilita}\n\n🔗 [Apri offerta]({link})"
     
     url_api = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-    try:
-        requests.post(url_api, data={
-            "chat_id": TELEGRAM_CHAT_ID, 
-            "photo": img_url, 
-            "caption": testo, 
-            "parse_mode": "MarkdownV2"
-        }, timeout=15)
-    except: pass
+    
+    # Ciclo per inviare a tutti gli ID configurati
+    for chat_id in TELEGRAM_CHAT_IDS:
+        try:
+            requests.post(url_api, data={
+                "chat_id": chat_id, 
+                "photo": img_url, 
+                "caption": testo, 
+                "parse_mode": "MarkdownV2"
+            }, timeout=15)
+        except Exception as e:
+            print(f"Errore invio a {chat_id}: {e}")
 
 async def run_bot():
     async with async_playwright() as p:
@@ -130,7 +133,6 @@ async def run_bot():
                     href = await link_el.get_attribute('href') if link_el else ""
                     link_completo = f"https://www.ikea.com/it/it/circular/second-hand/{href}" if (href and "#" in href) else URL_IKEA
                     
-                    # ID basato su nome e descrizione (senza spazi, minuscolo)
                     ident_str = f"{nome}_{desc}".replace(" ", "").lower()
                     prod_id = hashlib.md5(ident_str.encode()).hexdigest()
 
