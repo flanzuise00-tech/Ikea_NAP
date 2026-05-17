@@ -9,7 +9,7 @@ from playwright.async_api import async_playwright
 # --- CONFIGURAZIONE ---
 TELEGRAM_TOKEN = "8716709088:AAHGPkPfjHmzIAoTSObLq9Z0vgDqBR3vQuU"
 # Ora usiamo una lista di ID
-TELEGRAM_CHAT_IDS = ["308359205", "8818283555"] 
+TELEGRAM_CHAT_IDS = ["308359205","1423920486", "8818283555"] 
 CSV_FILE = "prodotti_visti.csv"
 URL_IKEA = "https://www.ikea.com/it/it/circular/second-hand/#/napoli?sort=id-desc"
 
